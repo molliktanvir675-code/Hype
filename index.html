@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>HYPE 1080p60 Encoder</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#09090d;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+main{max-width:720px;margin:auto;padding:24px 16px 40px}h1{margin:0 0 6px;font-size:28px}
+.sub{color:#999;margin-bottom:20px}.card{background:#15151b;border:1px solid #292932;border-radius:18px;padding:18px;margin:14px 0}
+input{width:100%;padding:14px;background:#0d0d12;border:1px dashed #444;border-radius:12px;color:#bbb}
+button{width:100%;padding:14px;margin-top:12px;border:0;border-radius:12px;background:#fff;color:#000;font-weight:700;font-size:16px}
+button:disabled{opacity:.45}.track{height:9px;background:#292932;border-radius:20px;margin-top:15px;overflow:hidden}.fill{height:100%;width:0;background:#fff}
+#status{color:#aaa;font-size:14px;margin-top:10px;line-height:1.45}.tag{display:inline-block;background:#24242c;border-radius:20px;padding:6px 9px;font-size:12px;margin:3px}
+.note{color:#888;font-size:12px;line-height:1.5}
+</style>
+</head>
+<body>
+<main>
+<h1>HYPE 1080p60 Encoder</h1>
+<div class="sub">1080×1920 • H.264 • Constant 60 FPS • CRF 18</div>
+
+<div class="card">
+<span class="tag">1080×1920</span><span class="tag">60 FPS CFR</span>
+<span class="tag">H.264 High</span><span class="tag">AAC 192k</span>
+</div>
+
+<div class="card">
+<input id="file" type="file" accept="video/*">
+<button id="load">Load FFmpeg</button>
+<button id="encode" disabled>Encode Video</button>
+<div class="track"><div id="fill" class="fill"></div></div>
+<div id="status">First tap “Load FFmpeg”. It downloads about 31 MB.</div>
+<button id="download" style="display:none">Download 1080p60 MP4</button>
+</div>
+
+<div class="card note">
+FFmpeg runs in your browser. The video itself is not uploaded to a server.
+The first load may take some time on iPhone. Keep Safari open while encoding.
+</div>
+</main>
+
+<script type="module">
+import { FFmpeg } from "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js";
+import { fetchFile, toBlobURL } from "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/esm/index.js";
+
+const ffmpeg = new FFmpeg();
+const loadBtn = document.getElementById("load");
+const encodeBtn = document.getElementById("encode");
+const fileEl = document.getElementById("file");
+const statusEl = document.getElementById("status");
+const fillEl = document.getElementById("fill");
+const downloadBtn = document.getElementById("download");
+let outputURL = null;
+
+ffmpeg.on("log", ({message}) => {
+  console.log(message);
+});
+
+ffmpeg.on("progress", ({progress}) => {
+  const p = Math.max(0, Math.min(1, progress || 0));
+  fillEl.style.width = (p * 100) + "%";
+  statusEl.textContent = "Encoding… " + Math.round(p * 100) + "%";
+});
+
+loadBtn.onclick = async () => {
+  if (ffmpeg.loaded) return;
+  loadBtn.disabled = true;
+  statusEl.textContent = "Loading FFmpeg… please wait.";
+  try {
+    const baseURL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd";
+    await ffmpeg.load({
+      coreURL: await toBlobURL(baseURL + "/ffmpeg-core.js", "text/javascript"),
+      wasmURL: await toBlobURL(baseURL + "/ffmpeg-core.wasm", "application/wasm")
+    });
+    statusEl.textContent = "FFmpeg loaded. Select your video and tap Encode Video.";
+    encodeBtn.disabled = false;
+    loadBtn.textContent = "FFmpeg Loaded ✓";
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = "FFmpeg loading failed: " + (err?.message || err);
+    loadBtn.disabled = false;
+  }
+};
+
+encodeBtn.onclick = async () => {
+  const file = fileEl.files?.[0];
+  if (!file) {
+    statusEl.textContent = "Select a video first.";
+    return;
+  }
+
+  encodeBtn.disabled = true;
+  downloadBtn.style.display = "none";
+  fillEl.style.width = "0%";
+
+  const ext = (file.name.split(".").pop() || "mp4").toLowerCase();
+  const inputName = "input." + ext;
+  const outputName = "HYPE_1080p60.mp4";
+
+  try {
+    statusEl.textContent = "Reading video…";
+    await ffmpeg.writeFile(inputName, await fetchFile(file));
+
+    await ffmpeg.exec([
+      "-i", inputName,
+      "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2",
+      "-r", "60",
+      "-fps_mode", "cfr",
+      "-c:v", "libx264",
+      "-preset", "medium",
+      "-crf", "18",
+      "-profile:v", "high",
+      "-level", "4.2",
+      "-pix_fmt", "yuv420p",
+      "-c:a", "aac",
+      "-b:a", "192k",
+      "-movflags", "+faststart",
+      outputName
+    ]);
+
+    const data = await ffmpeg.readFile(outputName);
+    if (outputURL) URL.revokeObjectURL(outputURL);
+    outputURL = URL.createObjectURL(new Blob([data.buffer], {type:"video/mp4"}));
+
+    fillEl.style.width = "100%";
+    statusEl.textContent = "Done! Tap Download 1080p60 MP4.";
+    downloadBtn.style.display = "block";
+
+    try { await ffmpeg.deleteFile(inputName); } catch {}
+    try { await ffmpeg.deleteFile(outputName); } catch {}
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = "Encoding failed: " + (err?.message || err);
+  } finally {
+    encodeBtn.disabled = false;
+  }
+};
+
+downloadBtn.onclick = () => {
+  if (!outputURL) return;
+  const a = document.createElement("a");
+  a.href = outputURL;
+  a.download = "HYPE_1080p60.mp4";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+};
+</script>
+</body>
+</html>
